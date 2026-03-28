@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::encoder::encode_mapbox;
+use crate::encoder::{encode_mapbox, encode_terrarium, Encoding};
 use crate::tile_format::Format;
 use crate::tile::tile_bounds_3857;
 
@@ -95,6 +95,7 @@ pub fn process_tile(
     base_val: f64,
     interval: f64,
     round: u32,
+    encoding: Encoding,
     format: Format,
     compress: Option<u8>,
 ) -> Result<Option<Vec<u8>>> {
@@ -195,7 +196,10 @@ pub fn process_tile(
         let bpy = ((py3[i] - gt[3]) / gt[5] - ry0 as f64) * sy;
 
         let elev = sample_bilinear(src_data, bw, bh, bpx, bpy, nodata);
-        let c = encode_mapbox(elev, base_val, interval, round, nodata);
+        let c = match encoding {
+            Encoding::Mapbox => encode_mapbox(elev, base_val, interval, round, nodata),
+            Encoding::Terrarium => encode_terrarium(elev, nodata),
+        };
         if c != [0, 0, 0] {
             any_valid = true;
         }

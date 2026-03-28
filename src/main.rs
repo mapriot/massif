@@ -12,6 +12,7 @@ mod tile_format;
 mod raster;
 mod tile;
 
+use encoder::Encoding;
 use tile_format::Format;
 use raster::{dataset_wgs84_bounds, process_tile};
 use tile::{lat_to_tile_y_xyz, lon_to_tile_x};
@@ -47,6 +48,10 @@ struct Args {
     /// Maximum zoom level to generate
     #[arg(long, default_value = "12")]
     max_z: u8,
+
+    /// RGB encoding scheme [default: mapbox]
+    #[arg(long, value_enum, default_value = "mapbox")]
+    encoding: Encoding,
 
     /// Output tile format [default: webp]
     #[arg(long, value_enum, default_value = "webp")]
@@ -137,9 +142,22 @@ fn main() -> Result<()> {
         .unwrap(),
     );
 
+    if args.encoding == Encoding::Terrarium {
+        if args.base_val != -10000.0 {
+            eprintln!("Warning: --base-val is ignored for --encoding terrarium");
+        }
+        if args.interval != 0.1 {
+            eprintln!("Warning: --interval is ignored for --encoding terrarium");
+        }
+        if args.round_digits != 3 {
+            eprintln!("Warning: --round-digits is ignored for --encoding terrarium");
+        }
+    }
+
     let bv = args.base_val;
     let iv = args.interval;
     let rd = args.round_digits;
+    let encoding = args.encoding;
     let compress = args.compress;
     let format = args.format;
     let mut n_written: u64 = 0;
@@ -149,7 +167,7 @@ fn main() -> Result<()> {
         let chunk_results: Vec<Option<Vec<u8>>> = chunk
             .par_iter()
             .map(|&(z, x, y)| {
-                let r = process_tile(&input_str, z, x, y, bv, iv, rd, format, compress);
+                let r = process_tile(&input_str, z, x, y, bv, iv, rd, encoding, format, compress);
                 pb.inc(1);
                 r.ok().flatten()
             })

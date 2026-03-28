@@ -2,7 +2,7 @@
 
 Fast terrain-RGB PMTiles generator from Float32 elevation rasters.
 
-Converts GeoTIFF, VRT, or any GDAL-supported elevation raster (DEM, DSM, DTM) into [Mapbox terrain-RGB](https://docs.mapbox.com/data/tilesets/reference/mapbox-terrain-rgb-v1/) encoded [PMTiles](https://protomaps.com/docs/pmtiles), ready to use with MapLibre GL for hillshading and 3D terrain.
+Converts GeoTIFF, VRT, or any GDAL-supported elevation raster (DEM, DSM, DTM) into Mapbox or Terrarium terrain-RGB encoded [PMTiles](https://protomaps.com/docs/pmtiles), ready to use with MapLibre GL for hillshading and 3D terrain.
 
 Built as a fast Rust replacement for [rio-rgbify](https://github.com/mapbox/rio-rgbify). Uses all CPU cores with zero per-tile Python overhead.
 
@@ -75,21 +75,30 @@ Arguments:
   <OUTPUT>  Output PMTiles file path
 
 Options:
+      --encoding <ENCODING>    RGB encoding scheme: mapbox, terrarium [default: mapbox]
+      --format <FORMAT>        Tile image format: webp, png [default: webp]
+      --compress <LEVEL>       Compression level 1–9 (omit for fastest)
+      --min-z <INT>            Minimum zoom level [default: 5]
+      --max-z <INT>            Maximum zoom level [default: 12]
+  -j, --workers <INT>          Thread count [default: all CPUs]
+  -h, --help                   Print help
+
+Mapbox encoding only:
   -b, --base-val <FLOAT>       Base elevation offset [default: -10000]
   -i, --interval <FLOAT>       Elevation interval / precision in metres [default: 0.1]
   -r, --round-digits <INT>     Zero out the lowest N bits of the encoded value [default: 3]
-      --min-z <INT>            Minimum zoom level [default: 5]
-      --max-z <INT>            Maximum zoom level [default: 12]
-      --format <FORMAT>        Tile image format: webp, png [default: webp]
-      --compress <LEVEL>       Compression level 1–9 (omit for fastest)
-  -j, --workers <INT>          Thread count [default: all CPUs]
-  -h, --help                   Print help
 ```
 
 ### Recommended production command
 
+**Mapbox encoding:**
 ```bash
 massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --compress 6 input.tif output.pmtiles
+```
+
+**Terrarium encoding:**
+```bash
+massif --encoding terrarium --min-z 5 --max-z 12 --compress 6 input.tif output.pmtiles
 ```
 
 ### Examples
@@ -104,7 +113,12 @@ Production — balanced size and speed:
 massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --compress 6 input.tif output.pmtiles
 ```
 
-PNG tiles (larger than WebP, but universally supported):
+Terrarium encoding (fixed encoding scheme, no extra parameters needed):
+```bash
+massif --encoding terrarium --min-z 5 --max-z 12 input.tif output.pmtiles
+```
+
+PNG tiles instead of WebP:
 ```bash
 massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --format png input.tif output.pmtiles
 ```
@@ -140,9 +154,9 @@ Common sources:
 - [ALOS World 3D](https://www.eorc.jaxa.jp/ALOS/en/dataset/aw3d30/aw3d30_e.htm)
 - Any Float32 GeoTIFF with elevation values in metres
 
-## Encoding
+## Encoding schemes
 
-massif uses the [Mapbox terrain-RGB encoding](https://docs.mapbox.com/data/tilesets/reference/mapbox-terrain-rgb-v1/):
+### Mapbox (default)
 
 ```
 encoded = floor((elevation - base_val) / interval)
@@ -151,16 +165,28 @@ G = (encoded >> 8)  & 0xFF
 B =  encoded        & 0xFF
 ```
 
-MapLibre decodes this as:
+MapLibre decodes as:
 ```
 height = base_val + (R × 65536 + G × 256 + B) × interval
 ```
 
 With the defaults (`base_val=-10000`, `interval=0.1`), the encodable range is −10 000 m to +1 677 721.5 m at 0.1 m precision. The `--round-digits` flag zeroes out the lowest N bits of the encoded integer, reducing entropy and improving compression without significant quality loss for hillshading.
 
-Nodata pixels (and any pixels outside the input extent) are encoded as `R=0, G=0, B=0`. Tiles that are entirely nodata are omitted from the output.
+### Terrarium
 
-Output tiles are 512×512 pixels in PMTiles v3 format. Default tile format is WebP lossless; use `--format png` for PNG.
+```
+val = elevation + 32768
+R = floor(val / 256)
+G = floor(val) mod 256
+B = floor(frac(val) × 256)
+```
+
+MapLibre decodes as:
+```
+height = (R × 256 + G + B / 256) − 32768
+```
+
+Encodable range: −32 768 m to +32 767.996 m at ~0.004 m precision. Used by Mapzen and many open elevation datasets. No extra parameters — the encoding is fixed. `--base-val`, `--interval`, and `--round-digits` are ignored with a warning.
 
 ## Using with MapLibre GL
 
@@ -188,9 +214,12 @@ Output tiles are 512×512 pixels in PMTiles v3 format. Default tile format is We
 }
 ```
 
+For Terrarium output, set `"encoding": "terrarium"` in the MapLibre source.
+
+Output tiles are 512×512 pixels in PMTiles v3 format. Default tile format is WebP lossless; use `--format png` for PNG.
+
 ## Roadmap
 
-- [ ] Terrarium encoding (`--encoding terrarium`)
 - [ ] MBTiles output (inferred from `.mbtiles` extension)
 - [ ] Pre-built binaries via GitHub Releases
 
