@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use pmtiles::{TileCoord, TileId};
 use rayon::prelude::*;
 
@@ -127,9 +127,12 @@ fn main() -> Result<()> {
     let pb = ProgressBar::new(tiles.len() as u64);
     pb.set_style(
         ProgressStyle::with_template(
-            "[{elapsed_precise}] {bar:45.cyan/blue} {pos:>6}/{len} tiles  {per_sec}  eta {eta}",
+            "[{elapsed_precise}] {bar:45.cyan/blue} {pos:>6}/{len} tiles  {tiles_per_sec}/s  eta {eta}",
         )
-        .unwrap(),
+        .unwrap()
+        .with_key("tiles_per_sec", |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+            write!(w, "{}", state.per_sec() as u64).unwrap();
+        }),
     );
 
     if args.encoding == Encoding::Terrarium {
