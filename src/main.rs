@@ -43,6 +43,12 @@ struct Args {
     #[arg(long, default_value = "12")]
     max_z: u8,
 
+    /// Compression level 1–9 (omit for fastest; 6 is a good default).
+    /// Higher = smaller file, slower encoding. Format-agnostic — maps to the
+    /// best available compressor for the output format (currently libwebp lossless effort).
+    #[arg(long, value_name = "LEVEL", value_parser = clap::value_parser!(u8).range(1..=9))]
+    compress: Option<u8>,
+
     /// Worker thread count (default: all CPUs)
     #[arg(short = 'j', long)]
     workers: Option<usize>,
@@ -148,6 +154,7 @@ fn process_tile(
     base_val: f64,
     interval: f64,
     round: u32,
+    compress: Option<u8>,
 ) -> Result<Option<Vec<u8>>> {
     use gdal::spatial_ref::{AxisMappingStrategy, CoordTransform, SpatialRef};
     use gdal::Dataset;
@@ -258,11 +265,23 @@ fn process_tile(
         return Ok(None);
     }
 
-    // ── WebP lossless ─────────────────────────────────────────────────────────
-    let mut webp = Vec::new();
-    WebPEncoder::new(&mut webp)
-        .encode(&rgb, 512, 512, ColorType::Rgb8)
-        .context("webp encode")?;
+    // ── WebP encode ───────────────────────────────────────────────────────────
+    // No --compress:  image-webp pure-Rust lossless — fastest path.
+    // --compress 1-9: libwebp lossless; maps 1-9 → effort 0-100.
+    //                 Lossless is mandatory — lossy corrupts elevation values.
+    let webp: Vec<u8> = if let Some(level) = compress {
+        let effort = (level - 1) as f32 * 100.0 / 8.0; // 1→0, 5→50, 9→100
+        webp::Encoder::from_rgb(&rgb, 512, 512)
+            .encode_simple(true, effort) // lossless=true, quality=effort
+            .unwrap()
+            .to_vec()
+    } else {
+        let mut buf = Vec::new();
+        WebPEncoder::new(&mut buf)
+            .encode(&rgb, 512, 512, ColorType::Rgb8)
+            .context("webp encode")?;
+        buf
+    };
 
     Ok(Some(webp))
 }
@@ -379,6 +398,7 @@ fn main() -> Result<()> {
     let bv = args.base_val;
     let iv = args.interval;
     let rd = args.round_digits;
+    let lq = args.compress;
     let mut n_written: u64 = 0;
 
     for chunk in tiles.chunks(CHUNK_SIZE) {
@@ -386,7 +406,7 @@ fn main() -> Result<()> {
         let chunk_results: Vec<Option<Vec<u8>>> = chunk
             .par_iter()
             .map(|&(z, x, y)| {
-                let r = process_tile(&input_str, z, x, y, bv, iv, rd);
+                let r = process_tile(&input_str, z, x, y, bv, iv, rd, lq);
                 pb.inc(1);
                 r.ok().flatten()
             })

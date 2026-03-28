@@ -16,7 +16,11 @@ path = "src/main.rs"
 [dependencies]
 gdal = "0.19"
 rayon = "1"
+# Two WebP encoders intentionally:
+# image-webp — pure Rust, fast, used when --compress is omitted
+# webp       — libwebp C bindings, slower but smaller, used with --compress 1-9
 image-webp = "0.2"
+webp = "0.3"
 pmtiles = { version = "0.21", features = ["write"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"

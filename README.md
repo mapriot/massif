@@ -8,12 +8,16 @@ Built as a fast Rust replacement for [rio-rgbify](https://github.com/mapbox/rio-
 
 ## Performance
 
-Tested on a 7 GB Float32 GeoTIFF (Indonesia, zoom 5–12, ~142K tiles):
+Tested on a 7.7 GB Float32 GeoTIFF (Indonesia, zoom 5–12, ~142K tiles, 14 threads, flags: `-b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 -j 14`):
 
-| Tool | Time | Notes |
-|------|------|-------|
-| rio-rgbify | ~10 min | 16 threads, lossy WebP |
-| **massif** | **~2:20 min** | 14 threads, lossless WebP |
+| Command | Time | Output size |
+|---------|------|-------------|
+| `massif` (no `--compress`) | 2:30 | 4 560 MB |
+| `massif --compress 6` | ~6:30 | ~2 844 MB |
+| `massif --compress 9` | 12:35 | 2 828 MB |
+| `rio-rgbify` | 10:21 | 2 947 MB |
+
+`--compress 6` is the recommended default for production: ~38% smaller than no compression, still 1.5× faster than rio-rgbify.
 
 ## Installation
 
@@ -71,31 +75,54 @@ Arguments:
   <OUTPUT>  Output PMTiles file path
 
 Options:
-  -b, --base-val <FLOAT>         Base elevation offset [default: -10000]
-  -i, --interval <FLOAT>         Elevation interval / precision in metres [default: 0.1]
-  -r, --round-digits <INT>       Zero out the lowest N bits of the encoded value [default: 3]
-      --min-z <INT>              Minimum zoom level [default: 5]
-      --max-z <INT>              Maximum zoom level [default: 12]
-  -j, --workers <INT>            Thread count [default: all CPUs]
-  -h, --help                     Print help
+  -b, --base-val <FLOAT>       Base elevation offset [default: -10000]
+  -i, --interval <FLOAT>       Elevation interval / precision in metres [default: 0.1]
+  -r, --round-digits <INT>     Zero out the lowest N bits of the encoded value [default: 3]
+      --min-z <INT>            Minimum zoom level [default: 5]
+      --max-z <INT>            Maximum zoom level [default: 12]
+      --compress <LEVEL>       Compression level 1–9 (omit for fastest)
+  -j, --workers <INT>          Thread count [default: all CPUs]
+  -h, --help                   Print help
+```
+
+### Recommended production command
+
+```bash
+massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --compress 6 input.tif output.pmtiles
 ```
 
 ### Examples
 
-Basic usage matching the rio-rgbify defaults:
+Fastest output — no extra compression (good for iteration/preview):
 ```bash
 massif input.tif output.pmtiles
 ```
 
-Equivalent to `rio rgbify -b -10000 -i 0.1 -j 16 -r 3 --min-z 5 --max-z 12 --format webp`:
+Production — balanced size and speed:
 ```bash
-massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 input.vrt output.pmtiles
+massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --compress 6 input.tif output.pmtiles
 ```
 
-Limit zoom range for a quick preview:
+Maximum compression (diminishing returns past 6):
 ```bash
-massif --min-z 8 --max-z 10 input.tif preview.pmtiles
+massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --compress 9 input.tif output.pmtiles
 ```
+
+## Compression levels
+
+`--compress` is a format-agnostic 1–9 scale (like gzip/zstd). Currently maps to libwebp lossless compression effort.
+
+| Level | WebP effort | Size vs no flag | Time vs no flag |
+|-------|-------------|-----------------|-----------------|
+| 1 | 0 | −24% | ~1.8× |
+| 5 | 50 | −38% | ~2.4× |
+| **6** | **63** | **−38%** | **~2.6×** ← recommended |
+| 7 | 75 | −38% | ~2.8× |
+| 9 | 100 | −38% | ~5× |
+
+The size curve flattens sharply after level 5 — levels 5–9 all produce nearly identical file sizes, but time keeps growing. Level 6 sits just past the knee of the curve.
+
+Omitting `--compress` uses a different encoder (pure-Rust image-webp) that is significantly faster but produces larger files. Use it when speed matters more than storage: local testing, ephemeral previews, or when you'll re-encode later.
 
 ## Input formats
 
@@ -158,7 +185,6 @@ Output tiles are 512×512 pixels, WebP lossless, in PMTiles v3 format.
 ## Roadmap
 
 - [ ] Terrarium encoding (`--encoding terrarium`)
-- [ ] Lossy WebP option (`--lossy-quality`)
 - [ ] MBTiles output
 - [ ] Pre-built binaries via GitHub Releases
 
