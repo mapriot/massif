@@ -8,10 +8,11 @@ use pmtiles::{PmTilesWriter, TileCoord, TileId, TileType};
 use rayon::prelude::*;
 
 mod encoder;
-mod output;
+mod tile_format;
 mod raster;
 mod tile;
 
+use tile_format::Format;
 use raster::{dataset_wgs84_bounds, process_tile};
 use tile::{lat_to_tile_y_xyz, lon_to_tile_x};
 
@@ -47,9 +48,13 @@ struct Args {
     #[arg(long, default_value = "12")]
     max_z: u8,
 
+    /// Output tile format [default: webp]
+    #[arg(long, value_enum, default_value = "webp")]
+    format: Format,
+
     /// Compression level 1–9 (omit for fastest; 6 is a good default).
     /// Higher = smaller file, slower encoding. Format-agnostic — maps to the
-    /// best available compressor for the output format (currently libwebp lossless effort).
+    /// best available compressor for the output format.
     #[arg(long, value_name = "LEVEL", value_parser = clap::value_parser!(u8).range(1..=9))]
     compress: Option<u8>,
 
@@ -109,7 +114,11 @@ fn main() -> Result<()> {
     let f = File::create(&args.output)
         .with_context(|| format!("create output {:?}", args.output))?;
 
-    let mut writer = PmTilesWriter::new(TileType::Webp)
+    let tile_type = match args.format {
+        Format::Webp => TileType::Webp,
+        Format::Png => TileType::Png,
+    };
+    let mut writer = PmTilesWriter::new(tile_type)
         .min_zoom(args.min_z)
         .max_zoom(args.max_z)
         .create(f)
@@ -132,6 +141,7 @@ fn main() -> Result<()> {
     let iv = args.interval;
     let rd = args.round_digits;
     let compress = args.compress;
+    let format = args.format;
     let mut n_written: u64 = 0;
 
     for chunk in tiles.chunks(CHUNK_SIZE) {
@@ -139,7 +149,7 @@ fn main() -> Result<()> {
         let chunk_results: Vec<Option<Vec<u8>>> = chunk
             .par_iter()
             .map(|&(z, x, y)| {
-                let r = process_tile(&input_str, z, x, y, bv, iv, rd, compress);
+                let r = process_tile(&input_str, z, x, y, bv, iv, rd, format, compress);
                 pb.inc(1);
                 r.ok().flatten()
             })

@@ -80,6 +80,7 @@ Options:
   -r, --round-digits <INT>     Zero out the lowest N bits of the encoded value [default: 3]
       --min-z <INT>            Minimum zoom level [default: 5]
       --max-z <INT>            Maximum zoom level [default: 12]
+      --format <FORMAT>        Tile image format: webp, png [default: webp]
       --compress <LEVEL>       Compression level 1–9 (omit for fastest)
   -j, --workers <INT>          Thread count [default: all CPUs]
   -h, --help                   Print help
@@ -101,6 +102,11 @@ massif input.tif output.pmtiles
 Production — balanced size and speed:
 ```bash
 massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --compress 6 input.tif output.pmtiles
+```
+
+PNG tiles (larger than WebP, but universally supported):
+```bash
+massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --format png input.tif output.pmtiles
 ```
 
 Maximum compression (diminishing returns past 6):
@@ -154,7 +160,7 @@ With the defaults (`base_val=-10000`, `interval=0.1`), the encodable range is �
 
 Nodata pixels (and any pixels outside the input extent) are encoded as `R=0, G=0, B=0`. Tiles that are entirely nodata are omitted from the output.
 
-Output tiles are 512×512 pixels, WebP lossless, in PMTiles v3 format.
+Output tiles are 512×512 pixels in PMTiles v3 format. Default tile format is WebP lossless; use `--format png` for PNG.
 
 ## Using with MapLibre GL
 
@@ -185,7 +191,7 @@ Output tiles are 512×512 pixels, WebP lossless, in PMTiles v3 format.
 ## Roadmap
 
 - [ ] Terrarium encoding (`--encoding terrarium`)
-- [ ] MBTiles output
+- [ ] MBTiles output (inferred from `.mbtiles` extension)
 - [ ] Pre-built binaries via GitHub Releases
 
 ## License

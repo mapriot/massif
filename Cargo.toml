@@ -21,6 +21,7 @@ rayon = "1"
 # webp       — libwebp C bindings, slower but smaller, used with --compress 1-9
 image-webp = "0.2"
 webp = "0.3"
+png = "0.17"
 pmtiles = { version = "0.21", features = ["write"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"

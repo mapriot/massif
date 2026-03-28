@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::encoder::encode_mapbox;
-use crate::output::webp::encode_tile;
+use crate::tile_format::Format;
 use crate::tile::tile_bounds_3857;
 
 /// Bilinear sample from a flat f32 buffer. Returns `nodata` if out of bounds.
@@ -95,6 +95,7 @@ pub fn process_tile(
     base_val: f64,
     interval: f64,
     round: u32,
+    format: Format,
     compress: Option<u8>,
 ) -> Result<Option<Vec<u8>>> {
     use gdal::raster::ResampleAlg;
@@ -205,5 +206,9 @@ pub fn process_tile(
         return Ok(None);
     }
 
-    Ok(Some(encode_tile(&rgb, compress)?))
+    let tile = match format {
+        Format::Webp => crate::tile_format::webp::encode_tile(&rgb, compress)?,
+        Format::Png => crate::tile_format::png::encode_tile(&rgb, compress)?,
+    };
+    Ok(Some(tile))
 }
