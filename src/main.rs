@@ -154,30 +154,42 @@ fn main() -> Result<()> {
     let format = args.format;
     let compress = args.compress;
     let mut n_written: u64 = 0;
+    let mut n_errors: u64 = 0;
 
     for chunk in tiles.chunks(CHUNK_SIZE) {
         // par_iter on a slice preserves order → results match chunk order (= Hilbert order)
-        let chunk_results: Vec<Option<Vec<u8>>> = chunk
+        let chunk_results: Vec<Result<Option<Vec<u8>>>> = chunk
             .par_iter()
             .map(|&(z, x, y)| {
                 let r = process_tile(&input_str, z, x, y, bv, iv, rd, encoding, format, compress);
                 pb.inc(1);
-                r.ok().flatten()
+                r
             })
             .collect();
 
-        for (i, maybe_tile) in chunk_results.iter().enumerate() {
-            if let Some(tile) = maybe_tile {
-                let (z, x, y) = chunk[i];
-                writer.add_tile(z, x, y, tile).context("add_tile")?;
-                n_written += 1;
+        for (i, result) in chunk_results.into_iter().enumerate() {
+            match result {
+                Ok(Some(tile)) => {
+                    let (z, x, y) = chunk[i];
+                    writer.add_tile(z, x, y, &tile).context("add_tile")?;
+                    n_written += 1;
+                }
+                Ok(None) => {} // entirely nodata tile, skip
+                Err(e) => {
+                    let (z, x, y) = chunk[i];
+                    eprintln!("Warning: tile {}/{}/{} failed: {:#}", z, x, y, e);
+                    n_errors += 1;
+                }
             }
         }
         // chunk_results dropped here — memory freed between chunks
     }
 
     pb.finish_with_message("done");
-    eprintln!("{} non-empty tiles", n_written);
+    eprintln!("{} non-empty tiles written", n_written);
+    if n_errors > 0 {
+        eprintln!("Warning: {} tiles failed and were skipped", n_errors);
+    }
 
     writer.finalize().context("finalize")?;
 
