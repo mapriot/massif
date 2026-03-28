@@ -22,6 +22,7 @@ rayon = "1"
 image-webp = "0.2"
 webp = "0.3"
 png = "0.17"
+rusqlite = { version = "0.39", features = ["bundled"] }
 pmtiles = { version = "0.21", features = ["write"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"

@@ -1,21 +1,22 @@
-use std::fs::File;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use pmtiles::{PmTilesWriter, TileCoord, TileId, TileType};
+use pmtiles::{TileCoord, TileId};
 use rayon::prelude::*;
 
+mod container;
 mod encoder;
-mod tile_format;
 mod raster;
 mod tile;
+mod tile_format;
 
+use container::Writer;
 use encoder::Encoding;
-use tile_format::Format;
 use raster::{dataset_wgs84_bounds, process_tile};
 use tile::{lat_to_tile_y_xyz, lon_to_tile_x};
+use tile_format::Format;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -115,19 +116,8 @@ fn main() -> Result<()> {
         TileId::from(TileCoord::new(z, x, y).expect("valid coord")).value()
     });
 
-    // ── Open PMTiles writer before processing (stream tiles, no RAM spike) ────
-    let f = File::create(&args.output)
-        .with_context(|| format!("create output {:?}", args.output))?;
-
-    let tile_type = match args.format {
-        Format::Webp => TileType::Webp,
-        Format::Png => TileType::Png,
-    };
-    let mut writer = PmTilesWriter::new(tile_type)
-        .min_zoom(args.min_z)
-        .max_zoom(args.max_z)
-        .create(f)
-        .context("create PMTiles writer")?;
+    // ── Open output writer (container inferred from file extension) ───────────
+    let mut writer = Writer::open(&args.output, args.format, args.min_z, args.max_z)?;
 
     // ── Parallel tile generation — chunked to bound peak memory ──────────────
     // Each chunk is processed in parallel and written before the next begins.
@@ -158,8 +148,8 @@ fn main() -> Result<()> {
     let iv = args.interval;
     let rd = args.round_digits;
     let encoding = args.encoding;
-    let compress = args.compress;
     let format = args.format;
+    let compress = args.compress;
     let mut n_written: u64 = 0;
 
     for chunk in tiles.chunks(CHUNK_SIZE) {
@@ -176,8 +166,7 @@ fn main() -> Result<()> {
         for (i, maybe_tile) in chunk_results.iter().enumerate() {
             if let Some(tile) = maybe_tile {
                 let (z, x, y) = chunk[i];
-                let coord = TileCoord::new(z, x, y).context("TileCoord")?;
-                writer.add_tile(coord, tile).context("add_tile")?;
+                writer.add_tile(z, x, y, tile).context("add_tile")?;
                 n_written += 1;
             }
         }

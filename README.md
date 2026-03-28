@@ -72,7 +72,7 @@ massif [OPTIONS] <INPUT> <OUTPUT>
 
 Arguments:
   <INPUT>   Float32 elevation raster — GeoTIFF, VRT, or any GDAL-supported format
-  <OUTPUT>  Output PMTiles file path
+  <OUTPUT>  Output file — .pmtiles or .mbtiles (container inferred from extension)
 
 Options:
       --encoding <ENCODING>    RGB encoding scheme: mapbox, terrarium [default: mapbox]
@@ -91,12 +91,12 @@ Mapbox encoding only:
 
 ### Recommended production command
 
-**Mapbox encoding:**
+**Mapbox + PMTiles:**
 ```bash
 massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --compress 6 input.tif output.pmtiles
 ```
 
-**Terrarium encoding:**
+**Terrarium + PMTiles:**
 ```bash
 massif --encoding terrarium --min-z 5 --max-z 12 --compress 6 input.tif output.pmtiles
 ```
@@ -113,7 +113,12 @@ Production — balanced size and speed:
 massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --compress 6 input.tif output.pmtiles
 ```
 
-Terrarium encoding (fixed encoding scheme, no extra parameters needed):
+MBTiles output — same flags, different extension:
+```bash
+massif -b -10000 -i 0.1 -r 3 --min-z 5 --max-z 12 --compress 6 input.tif output.mbtiles
+```
+
+Terrarium encoding (fixed scheme, no extra parameters needed):
 ```bash
 massif --encoding terrarium --min-z 5 --max-z 12 input.tif output.pmtiles
 ```
@@ -216,11 +221,10 @@ Encodable range: −32 768 m to +32 767.996 m at ~0.004 m precision. Used by Map
 
 For Terrarium output, set `"encoding": "terrarium"` in the MapLibre source.
 
-Output tiles are 512×512 pixels in PMTiles v3 format. Default tile format is WebP lossless; use `--format png` for PNG.
+Output tiles are 512×512 pixels. Default tile format is WebP lossless; use `--format png` for PNG. Output container is inferred from the file extension: `.pmtiles` for PMTiles v3, `.mbtiles` for MBTiles.
 
 ## Roadmap
 
-- [ ] MBTiles output (inferred from `.mbtiles` extension)
 - [ ] Pre-built binaries via GitHub Releases
 
 ## License
