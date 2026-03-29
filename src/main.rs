@@ -21,13 +21,14 @@ use tile_format::TileFormat;
 #[derive(Parser, Debug)]
 #[command(
     name = "massif",
-    about = "Generate Mapbox terrain-RGB PMTiles from a Float32 elevation raster (any input CRS)"
+    version,
+    about = "Fast terrain-RGB tile generator — converts elevation rasters to PMTiles or MBTiles"
 )]
 struct Args {
-    /// Input Float32 GeoTIFF or VRT (any GDAL-supported CRS, typically EPSG:4326 or UTM)
+    /// Input elevation raster — GeoTIFF, VRT, or any GDAL-supported format and CRS
     input: PathBuf,
 
-    /// Output PMTiles file path
+    /// Output file — .pmtiles or .mbtiles (container inferred from extension)
     output: PathBuf,
 
     /// Base elevation offset — Mapbox decode: height = base_val + (R·65536+G·256+B) · interval

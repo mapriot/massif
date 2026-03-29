@@ -2,12 +2,13 @@
 name = "massif"
 version = "0.1.0"
 edition = "2021"
-description = "Fast terrain-RGB PMTiles generator from Float32 elevation rasters"
+description = "Fast terrain-RGB tile generator from elevation rasters (PMTiles / MBTiles)"
 license = "MIT"
 repository = "https://github.com/mapriot/massif"
-keywords = ["geo", "terrain", "pmtiles", "gdal", "elevation"]
+keywords = ["geo", "terrain-rgb", "gdal", "pmtiles", "mbtiles"]
 categories = ["command-line-utilities", "science::geo"]
 readme = "README.md"
+exclude = ["docs/"]
 
 [[bin]]
 name = "massif"
