@@ -16,7 +16,7 @@ use container::Writer;
 use encoder::Encoding;
 use raster::{dataset_wgs84_bounds, process_tile};
 use tile::{lat_to_tile_y_xyz, lon_to_tile_x};
-use tile_format::Format;
+use tile_format::TileFormat;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -56,7 +56,7 @@ struct Args {
 
     /// Output tile format [default: webp]
     #[arg(long, value_enum, default_value = "webp")]
-    format: Format,
+    format: TileFormat,
 
     /// Compression level 1–9 (omit for fastest; 6 is a good default).
     /// Higher = smaller file, slower encoding. Format-agnostic — maps to the

@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 
-use crate::tile_format::Format;
+use crate::tile_format::TileFormat;
 
 /// MBTiles writer.
 ///
@@ -17,7 +17,7 @@ pub struct MbtilesWriter {
 }
 
 impl MbtilesWriter {
-    pub fn create(path: &Path, format: Format, min_z: u8, max_z: u8) -> Result<Self> {
+    pub fn create(path: &Path, format: TileFormat, min_z: u8, max_z: u8) -> Result<Self> {
         if path.exists() {
             std::fs::remove_file(path)
                 .with_context(|| format!("remove existing {:?}", path))?;
@@ -39,8 +39,8 @@ impl MbtilesWriter {
         ").context("create MBTiles schema")?;
 
         let mime = match format {
-            Format::Webp => "image/webp",
-            Format::Png  => "image/png",
+            TileFormat::Webp => "image/webp",
+            TileFormat::Png  => "image/png",
         };
 
         {

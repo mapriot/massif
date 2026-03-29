@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::encoder::{encode_mapbox, encode_terrarium, Encoding};
-use crate::tile_format::Format;
+use crate::tile_format::TileFormat;
 use crate::tile::tile_bounds_3857;
 
 /// Bilinear sample from a flat f32 buffer. Returns `nodata` if out of bounds.
@@ -96,7 +96,7 @@ pub fn process_tile(
     interval: f64,
     round: u32,
     encoding: Encoding,
-    format: Format,
+    format: TileFormat,
     compress: Option<u8>,
     nodata_override: Option<f32>,
 ) -> Result<Option<Vec<u8>>> {
@@ -213,8 +213,8 @@ pub fn process_tile(
     }
 
     let tile = match format {
-        Format::Webp => crate::tile_format::webp::encode_tile(&rgb, compress)?,
-        Format::Png => crate::tile_format::png::encode_tile(&rgb, compress)?,
+        TileFormat::Webp => crate::tile_format::webp::encode_tile(&rgb, compress)?,
+        TileFormat::Png => crate::tile_format::png::encode_tile(&rgb, compress)?,
     };
     Ok(Some(tile))
 }

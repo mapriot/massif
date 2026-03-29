@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
-use crate::tile_format::Format;
+use crate::tile_format::TileFormat;
 use mbtiles::MbtilesWriter;
 use pmtiles::PmtilesWriter;
 
@@ -17,7 +17,7 @@ pub enum Writer {
 }
 
 impl Writer {
-    pub fn open(path: &Path, format: Format, min_z: u8, max_z: u8) -> Result<Self> {
+    pub fn open(path: &Path, format: TileFormat, min_z: u8, max_z: u8) -> Result<Self> {
         match path.extension().and_then(|e| e.to_str()) {
             Some("pmtiles") => Ok(Self::Pmtiles(
                 PmtilesWriter::create(path, format, min_z, max_z)?,

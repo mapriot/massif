@@ -4,17 +4,17 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use pmtiles::{PmTilesStreamWriter, PmTilesWriter, TileCoord, TileType};
 
-use crate::tile_format::Format;
+use crate::tile_format::TileFormat;
 
 pub struct PmtilesWriter {
     inner: PmTilesStreamWriter<File>,
 }
 
 impl PmtilesWriter {
-    pub fn create(path: &Path, format: Format, min_z: u8, max_z: u8) -> Result<Self> {
+    pub fn create(path: &Path, format: TileFormat, min_z: u8, max_z: u8) -> Result<Self> {
         let tile_type = match format {
-            Format::Webp => TileType::Webp,
-            Format::Png => TileType::Png,
+            TileFormat::Webp => TileType::Webp,
+            TileFormat::Png => TileType::Png,
         };
         let f = File::create(path)
             .with_context(|| format!("create {:?}", path))?;
