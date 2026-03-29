@@ -78,6 +78,7 @@ Options:
       --encoding <ENCODING>    RGB encoding scheme: mapbox, terrarium [default: mapbox]
       --format <FORMAT>        Tile image format: webp, png [default: webp]
       --compress <LEVEL>       Compression level 1–9 (omit for fastest)
+      --nodata <FLOAT>         Override nodata value (e.g. 0, -9999, -32768)
       --min-z <INT>            Minimum zoom level [default: 5]
       --max-z <INT>            Maximum zoom level [default: 12]
   -j, --workers <INT>          Thread count [default: all CPUs]

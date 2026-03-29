@@ -98,6 +98,7 @@ pub fn process_tile(
     encoding: Encoding,
     format: Format,
     compress: Option<u8>,
+    nodata_override: Option<f32>,
 ) -> Result<Option<Vec<u8>>> {
     use gdal::raster::ResampleAlg;
     use gdal::spatial_ref::{AxisMappingStrategy, CoordTransform, SpatialRef};
@@ -107,7 +108,8 @@ pub fn process_tile(
     let gt = dataset.geo_transform().context("geo_transform")?;
     let (src_w, src_h) = dataset.raster_size();
     let band = dataset.rasterband(1).context("rasterband 1")?;
-    let nodata = band.no_data_value().unwrap_or(-32_767.0) as f32;
+    let nodata = nodata_override
+        .unwrap_or_else(|| band.no_data_value().unwrap_or(-32_767.0) as f32);
 
     // ── Coordinate transform: EPSG:3857 → source SRS ──────────────────────────
     let mut srs_3857 = SpatialRef::from_epsg(3857).context("EPSG:3857")?;

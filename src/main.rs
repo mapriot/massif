@@ -64,6 +64,11 @@ struct Args {
     #[arg(long, value_name = "LEVEL", value_parser = clap::value_parser!(u8).range(1..=9))]
     compress: Option<u8>,
 
+    /// Override the nodata value from the raster metadata.
+    /// Useful when the file has no embedded nodata or it is wrong (common values: 0, -9999, -32768).
+    #[arg(long, allow_hyphen_values = true)]
+    nodata: Option<f32>,
+
     /// Worker thread count (default: all CPUs)
     #[arg(short = 'j', long)]
     workers: Option<usize>,
@@ -153,6 +158,7 @@ fn main() -> Result<()> {
     let encoding = args.encoding;
     let format = args.format;
     let compress = args.compress;
+    let nodata = args.nodata;
     let mut n_written: u64 = 0;
     let mut n_errors: u64 = 0;
 
@@ -161,7 +167,7 @@ fn main() -> Result<()> {
         let chunk_results: Vec<Result<Option<Vec<u8>>>> = chunk
             .par_iter()
             .map(|&(z, x, y)| {
-                let r = process_tile(&input_str, z, x, y, bv, iv, rd, encoding, format, compress);
+                let r = process_tile(&input_str, z, x, y, bv, iv, rd, encoding, format, compress, nodata);
                 pb.inc(1);
                 r
             })
