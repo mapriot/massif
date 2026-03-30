@@ -115,12 +115,18 @@ fn main() -> Result<()> {
         rayon::current_num_threads()
     );
 
-    // ── Pre-sort tiles by Hilbert ID so PMTiles is written in optimal order ────
-    // Rayon's par_iter preserves input order in collect(), so chunks processed
-    // in parallel will also arrive in Hilbert order — no post-sort needed.
-    tiles.sort_unstable_by_key(|&(z, x, y)| {
-        TileId::from(TileCoord::new(z, x, y).expect("valid coord")).value()
-    });
+    // ── Pre-sort tiles by Hilbert ID (PMTiles streaming writer needs order) ────
+    // MBTiles uses SQLite — insertion order doesn't matter, skip the sort.
+    let needs_hilbert_sort =
+        args.output.extension().and_then(|e| e.to_str()) == Some("pmtiles");
+    if needs_hilbert_sort {
+        eprintln!("Sorting {} tiles by Hilbert ID…", tiles.len());
+        // sort_by_cached_key computes TileId once per tile (O(n)), not per
+        // comparison (O(n log n)) — significant for millions of tiles.
+        tiles.sort_by_cached_key(|&(z, x, y)| {
+            TileId::from(TileCoord::new(z, x, y).expect("valid coord")).value()
+        });
+    }
 
     // ── Open output writer (container inferred from file extension) ───────────
     let mut writer = Writer::open(&args.output, args.format, args.min_z, args.max_z)?;
