@@ -1,6 +1,6 @@
 [package]
 name = "massif"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Fast terrain-RGB tile generator from elevation rasters (PMTiles / MBTiles)"
 license = "MIT"
