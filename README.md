@@ -108,17 +108,19 @@ Massif (via GDAL) picks up the `.ovr` sidecar automatically. The tradeoff is sto
 
 ### Single large TIF — 7.2 GB (Indonesia, zoom 5–12, ~142K tiles)
 
-| Machine | Overviews | Command | Time | Output |
-|---|---|---|---|---|
-| Apple M4 Pro, 14 threads | no | `massif` | 2:30 | 4,560 MB |
-| Apple M4 Pro, 14 threads | yes | `massif` | 1:28 | 4,560 MB |
-| Apple M4 Pro, 14 threads | no | `massif --compress 6` | 6:29 | 2,844 MB |
-| Apple M4 Pro, 14 threads | yes | `massif --compress 6` | 5:35 | 2,844 MB |
-| Xeon Silver 4210, 20 threads | no | `massif` | 7:20 | 4,560 MB |
-| Xeon Silver 4210, 20 threads | yes | `massif` | 5:42 | 4,560 MB |
-| Xeon Silver 4210, 20 threads | no | `massif --compress 6` | 16:21 | 2,844 MB |
-| Xeon Silver 4210, 20 threads | yes | `massif --compress 6` | 12:44 | 2,844 MB |
-| Xeon Silver 4210, 20 threads | no | `rio-rgbify` | 25:51 | ~2,810 MB |
+| Machine | Version | Overviews | Command | Time | Output |
+|---|---|---|---|---|---|
+| **Apple M4 Pro, 14 threads** | **v0.1.1** | **no** | **`massif`** | **0:59** | **4,560 MB** |
+| **Apple M4 Pro, 14 threads** | **v0.1.1** | **no** | **`massif --compress 6`** | **5:10** | **2,844 MB** |
+| Apple M4 Pro, 14 threads | v0.1.0 | no | `massif` | 2:30 | 4,560 MB |
+| Apple M4 Pro, 14 threads | v0.1.0 | yes | `massif` | 1:28 | 4,560 MB |
+| Apple M4 Pro, 14 threads | v0.1.0 | no | `massif --compress 6` | 6:29 | 2,844 MB |
+| Apple M4 Pro, 14 threads | v0.1.0 | yes | `massif --compress 6` | 5:35 | 2,844 MB |
+| Xeon Silver 4210, 20 threads | v0.1.0 | no | `massif` | 7:20 | 4,560 MB |
+| Xeon Silver 4210, 20 threads | v0.1.0 | yes | `massif` | 5:42 | 4,560 MB |
+| Xeon Silver 4210, 20 threads | v0.1.0 | no | `massif --compress 6` | 16:21 | 2,844 MB |
+| Xeon Silver 4210, 20 threads | v0.1.0 | yes | `massif --compress 6` | 12:44 | 2,844 MB |
+| Xeon Silver 4210, 20 threads | — | no | `rio-rgbify` | 25:51 | ~2,810 MB |
 
 ### VRT of 70 TIFs — 66 GB total (Europe + Oceania, zoom 5–12)
 
@@ -131,6 +133,7 @@ rio-rgbify did not finish after 48 hours on the same machine and dataset. All ma
 
 | Setting | Impact | Notes |
 |---|---|---|
+| EPSG:4326 input | **~2.5× faster** (no compress) | massif skips GDAL transforms entirely; use `gdalwarp -t_srs EPSG:4326` |
 | GDAL overviews | **−20–40%** time | Effective for single TIFs; `.ovr` can match source file size |
 | WebP vs PNG | WebP is **2× smaller** | Use PNG only if client doesn't support WebP |
 | `--compress 6` | **−38%** size vs no compression | Best size/speed tradeoff; gains flatten past 5 |

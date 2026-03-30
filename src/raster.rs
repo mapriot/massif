@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 
 use crate::encoder::{encode_mapbox, encode_terrarium, Encoding};
 use crate::tile_format::TileFormat;
-use crate::tile::tile_bounds_3857;
+use crate::tile::{merc_to_wgs84, tile_bounds_3857};
 
 /// Bilinear sample from a flat f32 buffer. Returns `nodata` if out of bounds.
 pub fn sample_bilinear(
@@ -111,14 +111,24 @@ pub fn process_tile(
     let nodata = nodata_override
         .unwrap_or_else(|| band.no_data_value().unwrap_or(-32_767.0) as f32);
 
-    // ── Coordinate transform: EPSG:3857 → source SRS ──────────────────────────
-    let mut srs_3857 = SpatialRef::from_epsg(3857).context("EPSG:3857")?;
-    srs_3857.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
-
+    // ── Detect if source is WGS84 geographic (EPSG:4326) ─────────────────────
+    // When true, we skip GDAL coordinate transforms entirely and use direct
+    // Mercator → geographic math — the dominant per-tile cost at high zoom.
     let mut src_srs = SpatialRef::from_wkt(&dataset.projection()).context("source SRS")?;
     src_srs.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
 
-    let to_src = CoordTransform::new(&srs_3857, &src_srs).context("coord transform 3857→src")?;
+    let src_is_wgs84 = src_srs.is_geographic()
+        && src_srs.auth_name().as_deref() == Some("EPSG")
+        && src_srs.auth_code().ok() == Some(4326);
+
+    // Build coord transform only for non-WGS84 sources
+    let to_src = if !src_is_wgs84 {
+        let mut srs_3857 = SpatialRef::from_epsg(3857).context("EPSG:3857")?;
+        srs_3857.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
+        Some(CoordTransform::new(&srs_3857, &src_srs).context("coord transform 3857→src")?)
+    } else {
+        None
+    };
 
     // ── Tile extent in 3857 ───────────────────────────────────────────────────
     let [west_m, south_m, east_m, north_m] = tile_bounds_3857(z, x, y_xyz);
@@ -128,9 +138,16 @@ pub fn process_tile(
     let mid_y = (south_m + north_m) / 2.0;
     let mut cx = [west_m, east_m, west_m, east_m, mid_x, west_m, east_m, mid_x];
     let mut cy = [south_m, south_m, north_m, north_m, mid_y, mid_y, mid_y, south_m];
-    to_src
-        .transform_coords(&mut cx, &mut cy, &mut [])
-        .context("transform corners")?;
+    if let Some(ref t) = to_src {
+        t.transform_coords(&mut cx, &mut cy, &mut [] as &mut [f64])
+            .context("transform corners")?;
+    } else {
+        for i in 0..cx.len() {
+            let (lon, lat) = merc_to_wgs84(cx[i], cy[i]);
+            cx[i] = lon;
+            cy[i] = lat;
+        }
+    }
 
     let src_x_min = cx.iter().cloned().fold(f64::MAX, f64::min);
     let src_x_max = cx.iter().cloned().fold(f64::MIN, f64::max);
@@ -172,22 +189,38 @@ pub fn process_tile(
     let sx = bw as f64 / rw as f64; // source → buffer scale
     let sy = bh as f64 / rh as f64;
 
-    // ── Transform all 512×512 output pixel centres from 3857 → source SRS ────
+    // ── Build 512×512 output pixel centre coordinates in source SRS ──────────
     let n = 512 * 512;
     let pw = (east_m - west_m) / 512.0;
     let ph = (north_m - south_m) / 512.0;
 
     let mut px3 = Vec::with_capacity(n);
     let mut py3 = Vec::with_capacity(n);
-    for row in 0..512usize {
-        for col in 0..512usize {
-            px3.push(west_m + (col as f64 + 0.5) * pw);
-            py3.push(north_m - (row as f64 + 0.5) * ph);
+
+    if src_is_wgs84 {
+        // Fast path: convert Mercator → WGS84 directly, no GDAL transform
+        for row in 0..512usize {
+            for col in 0..512usize {
+                let x_m = west_m + (col as f64 + 0.5) * pw;
+                let y_m = north_m - (row as f64 + 0.5) * ph;
+                let (lon, lat) = merc_to_wgs84(x_m, y_m);
+                px3.push(lon);
+                py3.push(lat);
+            }
         }
+    } else {
+        for row in 0..512usize {
+            for col in 0..512usize {
+                px3.push(west_m + (col as f64 + 0.5) * pw);
+                py3.push(north_m - (row as f64 + 0.5) * ph);
+            }
+        }
+        to_src
+            .as_ref()
+            .unwrap()
+            .transform_coords(&mut px3, &mut py3, &mut [])
+            .context("transform pixel grid")?;
     }
-    to_src
-        .transform_coords(&mut px3, &mut py3, &mut [])
-        .context("transform pixel grid")?;
 
     // ── Sample + encode ───────────────────────────────────────────────────────
     let mut rgb = vec![0u8; n * 3];
