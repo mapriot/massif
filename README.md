@@ -110,8 +110,10 @@ Massif (via GDAL) picks up the `.ovr` sidecar automatically. The tradeoff is sto
 
 | Machine | Version | Overviews | Command | Time | Output |
 |---|---|---|---|---|---|
-| **Apple M4 Pro, 14 threads** | **v0.1.1** | **no** | **`massif`** | **0:59** | **4,560 MB** |
-| **Apple M4 Pro, 14 threads** | **v0.1.1** | **no** | **`massif --compress 6`** | **5:10** | **2,844 MB** |
+| **Apple M4 Pro, 14 threads** | **v0.1.1** | **yes** | **`massif`** | **0:51** | **4,560 MB** |
+| **Apple M4 Pro, 14 threads** | **v0.1.1** | **yes** | **`massif --compress 6`** | **4:52** | **2,844 MB** |
+| **Apple M4 Pro, 14 threads** | **v0.1.1** | **no** | **`massif`** | **2:02** | **4,560 MB** |
+| **Apple M4 Pro, 14 threads** | **v0.1.1** | **no** | **`massif --compress 6`** | **6:18** | **2,844 MB** |
 | Apple M4 Pro, 14 threads | v0.1.0 | no | `massif` | 2:30 | 4,560 MB |
 | Apple M4 Pro, 14 threads | v0.1.0 | yes | `massif` | 1:28 | 4,560 MB |
 | Apple M4 Pro, 14 threads | v0.1.0 | no | `massif --compress 6` | 6:29 | 2,844 MB |

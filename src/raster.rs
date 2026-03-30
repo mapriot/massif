@@ -1,6 +1,9 @@
+use std::cell::RefCell;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use gdal::spatial_ref::{AxisMappingStrategy, CoordTransform, SpatialRef};
+use gdal::Dataset;
 
 use crate::encoder::{encode_mapbox, encode_terrarium, Encoding};
 use crate::tile_format::TileFormat;
@@ -49,9 +52,6 @@ pub fn sample_bilinear(
 /// Read the WGS84 bounding box of a GDAL dataset.
 /// Returns (west_lon, south_lat, east_lon, north_lat).
 pub fn dataset_wgs84_bounds(path: &Path) -> Result<(f64, f64, f64, f64)> {
-    use gdal::spatial_ref::{AxisMappingStrategy, CoordTransform, SpatialRef};
-    use gdal::Dataset;
-
     let ds = Dataset::open(path).context("open dataset")?;
     let gt = ds.geo_transform().context("geo_transform")?;
     let (w, h) = ds.raster_size();
@@ -70,7 +70,7 @@ pub fn dataset_wgs84_bounds(path: &Path) -> Result<(f64, f64, f64, f64)> {
     wgs84.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
     let to_wgs84 = CoordTransform::new(&src_srs, &wgs84).context("coord transform")?;
     to_wgs84
-        .transform_coords(&mut xs, &mut ys, &mut [])
+        .transform_coords(&mut xs, &mut ys, &mut [] as &mut [f64])
         .context("transform corners to WGS84")?;
 
     let west = xs.iter().cloned().fold(f64::MAX, f64::min);
@@ -85,8 +85,67 @@ pub fn dataset_wgs84_bounds(path: &Path) -> Result<(f64, f64, f64, f64)> {
     Ok((west, south, east, north))
 }
 
+// ── Per-thread dataset cache ──────────────────────────────────────────────────
+// GDAL datasets are not Send, but are safe to reuse on the same thread. Rayon
+// uses a persistent thread pool, so caching here means each worker opens the
+// dataset once rather than once per tile. Especially impactful for VRT inputs
+// where GDAL parses all sub-file references on every open.
+
+struct DatasetCache {
+    input_path: String,
+    dataset: Dataset,
+    gt: [f64; 6],
+    src_w: usize,
+    src_h: usize,
+    nodata_base: f32,
+    src_is_wgs84: bool,
+    to_src: Option<CoordTransform>,
+}
+
+thread_local! {
+    static TILE_CACHE: RefCell<Option<DatasetCache>> = RefCell::new(None);
+}
+
+fn init_dataset_cache(input_path: &str) -> Result<DatasetCache> {
+    let dataset = Dataset::open(input_path).context("open dataset")?;
+    let gt = dataset.geo_transform().context("geo_transform")?;
+    let (src_w, src_h) = dataset.raster_size();
+    let nodata_base = dataset
+        .rasterband(1)
+        .context("rasterband 1")?
+        .no_data_value()
+        .unwrap_or(-32_767.0) as f32;
+
+    let mut src_srs = SpatialRef::from_wkt(&dataset.projection()).context("source SRS")?;
+    src_srs.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
+
+    let src_is_wgs84 = src_srs.is_geographic()
+        && src_srs.auth_name().as_deref() == Some("EPSG")
+        && src_srs.auth_code().ok() == Some(4326);
+
+    let to_src = if !src_is_wgs84 {
+        let mut srs_3857 = SpatialRef::from_epsg(3857).context("EPSG:3857")?;
+        srs_3857.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
+        Some(CoordTransform::new(&srs_3857, &src_srs).context("coord transform 3857→src")?)
+    } else {
+        None
+    };
+
+    Ok(DatasetCache {
+        input_path: input_path.to_owned(),
+        dataset,
+        gt,
+        src_w,
+        src_h,
+        nodata_base,
+        src_is_wgs84,
+        to_src,
+    })
+}
+
 /// Process one tile; returns `None` if entirely nodata.
-/// Opens its own GDAL handle — required because GDAL datasets are not Send.
+/// Uses a per-thread dataset cache — GDAL datasets are not Send but are safe
+/// to reuse on the same thread across tiles.
 pub fn process_tile(
     input_path: &str,
     z: u8,
@@ -101,153 +160,148 @@ pub fn process_tile(
     nodata_override: Option<f32>,
 ) -> Result<Option<Vec<u8>>> {
     use gdal::raster::ResampleAlg;
-    use gdal::spatial_ref::{AxisMappingStrategy, CoordTransform, SpatialRef};
-    use gdal::Dataset;
 
-    let dataset = Dataset::open(input_path).context("open dataset")?;
-    let gt = dataset.geo_transform().context("geo_transform")?;
-    let (src_w, src_h) = dataset.raster_size();
-    let band = dataset.rasterband(1).context("rasterband 1")?;
-    let nodata = nodata_override
-        .unwrap_or_else(|| band.no_data_value().unwrap_or(-32_767.0) as f32);
-
-    // ── Detect if source is WGS84 geographic (EPSG:4326) ─────────────────────
-    // When true, we skip GDAL coordinate transforms entirely and use direct
-    // Mercator → geographic math — the dominant per-tile cost at high zoom.
-    let mut src_srs = SpatialRef::from_wkt(&dataset.projection()).context("source SRS")?;
-    src_srs.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
-
-    let src_is_wgs84 = src_srs.is_geographic()
-        && src_srs.auth_name().as_deref() == Some("EPSG")
-        && src_srs.auth_code().ok() == Some(4326);
-
-    // Build coord transform only for non-WGS84 sources
-    let to_src = if !src_is_wgs84 {
-        let mut srs_3857 = SpatialRef::from_epsg(3857).context("EPSG:3857")?;
-        srs_3857.set_axis_mapping_strategy(AxisMappingStrategy::TraditionalGisOrder);
-        Some(CoordTransform::new(&srs_3857, &src_srs).context("coord transform 3857→src")?)
-    } else {
-        None
-    };
-
-    // ── Tile extent in 3857 ───────────────────────────────────────────────────
-    let [west_m, south_m, east_m, north_m] = tile_bounds_3857(z, x, y_xyz);
-
-    // ── Transform tile corners + midpoints to source SRS for read window ──────
-    let mid_x = (west_m + east_m) / 2.0;
-    let mid_y = (south_m + north_m) / 2.0;
-    let mut cx = [west_m, east_m, west_m, east_m, mid_x, west_m, east_m, mid_x];
-    let mut cy = [south_m, south_m, north_m, north_m, mid_y, mid_y, mid_y, south_m];
-    if let Some(ref t) = to_src {
-        t.transform_coords(&mut cx, &mut cy, &mut [] as &mut [f64])
-            .context("transform corners")?;
-    } else {
-        for i in 0..cx.len() {
-            let (lon, lat) = merc_to_wgs84(cx[i], cy[i]);
-            cx[i] = lon;
-            cy[i] = lat;
-        }
-    }
-
-    let src_x_min = cx.iter().cloned().fold(f64::MAX, f64::min);
-    let src_x_max = cx.iter().cloned().fold(f64::MIN, f64::max);
-    let src_y_min = cy.iter().cloned().fold(f64::MAX, f64::min);
-    let src_y_max = cy.iter().cloned().fold(f64::MIN, f64::max);
-
-    // ── Convert source-SRS bbox to pixel indices ──────────────────────────────
-    // gt: [origin_x, px_width, 0, origin_y, 0, px_height(negative)]
-    let px_min = (src_x_min - gt[0]) / gt[1];
-    let px_max = (src_x_max - gt[0]) / gt[1];
-    // gt[5] < 0, so larger src_y → smaller py
-    let py_min = (src_y_max - gt[3]) / gt[5];
-    let py_max = (src_y_min - gt[3]) / gt[5];
-
-    // Expand 1 px for bilinear border; clamp to source bounds
-    let rx0 = (px_min.floor() as i64 - 1).clamp(0, src_w as i64 - 1) as usize;
-    let ry0 = (py_min.floor() as i64 - 1).clamp(0, src_h as i64 - 1) as usize;
-    let rx1 = (px_max.ceil() as i64 + 2).clamp(rx0 as i64 + 1, src_w as i64) as usize;
-    let ry1 = (py_max.ceil() as i64 + 2).clamp(ry0 as i64 + 1, src_h as i64) as usize;
-
-    let rw = rx1 - rx0;
-    let rh = ry1 - ry0;
-
-    // Cap buffer to 2048 — GDAL bilinear-resamples if buf_size < window_size
-    const MAX_BUF: usize = 2048;
-    let bw = rw.min(MAX_BUF);
-    let bh = rh.min(MAX_BUF);
-
-    let buf = band
-        .read_as::<f32>(
-            (rx0 as isize, ry0 as isize),
-            (rw, rh),
-            (bw, bh),
-            Some(ResampleAlg::Bilinear),
-        )
-        .context("read_as")?;
-    let src_data = buf.data();
-
-    let sx = bw as f64 / rw as f64; // source → buffer scale
-    let sy = bh as f64 / rh as f64;
-
-    // ── Build 512×512 output pixel centre coordinates in source SRS ──────────
-    let n = 512 * 512;
-    let pw = (east_m - west_m) / 512.0;
-    let ph = (north_m - south_m) / 512.0;
-
-    let mut px3 = Vec::with_capacity(n);
-    let mut py3 = Vec::with_capacity(n);
-
-    if src_is_wgs84 {
-        // Fast path: convert Mercator → WGS84 directly, no GDAL transform
-        for row in 0..512usize {
-            for col in 0..512usize {
-                let x_m = west_m + (col as f64 + 0.5) * pw;
-                let y_m = north_m - (row as f64 + 0.5) * ph;
-                let (lon, lat) = merc_to_wgs84(x_m, y_m);
-                px3.push(lon);
-                py3.push(lat);
+    TILE_CACHE.with(|cell| -> Result<Option<Vec<u8>>> {
+        // Ensure this thread's cache is warm for the current input path.
+        // The inner scope drops the mutable borrow before we take an immutable one below.
+        {
+            let mut opt = cell.borrow_mut();
+            if opt.as_ref().map_or(true, |c| c.input_path != input_path) {
+                *opt = Some(init_dataset_cache(input_path)?);
             }
         }
-    } else {
-        for row in 0..512usize {
-            for col in 0..512usize {
-                px3.push(west_m + (col as f64 + 0.5) * pw);
-                py3.push(north_m - (row as f64 + 0.5) * ph);
+
+        let cache_ref = cell.borrow();
+        let cache = cache_ref.as_ref().unwrap();
+
+        let nodata = nodata_override.unwrap_or(cache.nodata_base);
+        let gt = cache.gt;
+        let src_w = cache.src_w;
+        let src_h = cache.src_h;
+        let src_is_wgs84 = cache.src_is_wgs84;
+
+        let band = cache.dataset.rasterband(1).context("rasterband 1")?;
+
+        // ── Tile extent in 3857 ───────────────────────────────────────────────
+        let [west_m, south_m, east_m, north_m] = tile_bounds_3857(z, x, y_xyz);
+
+        // ── Transform tile corners + midpoints to source SRS for read window ──
+        let mid_x = (west_m + east_m) / 2.0;
+        let mid_y = (south_m + north_m) / 2.0;
+        let mut cx = [west_m, east_m, west_m, east_m, mid_x, west_m, east_m, mid_x];
+        let mut cy = [south_m, south_m, north_m, north_m, mid_y, mid_y, mid_y, south_m];
+        if let Some(ref t) = cache.to_src {
+            t.transform_coords(&mut cx, &mut cy, &mut [] as &mut [f64])
+                .context("transform corners")?;
+        } else {
+            for i in 0..cx.len() {
+                let (lon, lat) = merc_to_wgs84(cx[i], cy[i]);
+                cx[i] = lon;
+                cy[i] = lat;
             }
         }
-        to_src
-            .as_ref()
-            .unwrap()
-            .transform_coords(&mut px3, &mut py3, &mut [])
-            .context("transform pixel grid")?;
-    }
 
-    // ── Sample + encode ───────────────────────────────────────────────────────
-    let mut rgb = vec![0u8; n * 3];
-    let mut any_valid = false;
+        let src_x_min = cx.iter().cloned().fold(f64::MAX, f64::min);
+        let src_x_max = cx.iter().cloned().fold(f64::MIN, f64::max);
+        let src_y_min = cy.iter().cloned().fold(f64::MAX, f64::min);
+        let src_y_max = cy.iter().cloned().fold(f64::MIN, f64::max);
 
-    for i in 0..n {
-        let bpx = ((px3[i] - gt[0]) / gt[1] - rx0 as f64) * sx;
-        let bpy = ((py3[i] - gt[3]) / gt[5] - ry0 as f64) * sy;
+        // ── Convert source-SRS bbox to pixel indices ──────────────────────────
+        // gt: [origin_x, px_width, 0, origin_y, 0, px_height(negative)]
+        let px_min = (src_x_min - gt[0]) / gt[1];
+        let px_max = (src_x_max - gt[0]) / gt[1];
+        // gt[5] < 0, so larger src_y → smaller py
+        let py_min = (src_y_max - gt[3]) / gt[5];
+        let py_max = (src_y_min - gt[3]) / gt[5];
 
-        let elev = sample_bilinear(src_data, bw, bh, bpx, bpy, nodata);
-        let c = match encoding {
-            Encoding::Mapbox => encode_mapbox(elev, base_val, interval, round, nodata),
-            Encoding::Terrarium => encode_terrarium(elev, nodata),
+        // Expand 1 px for bilinear border; clamp to source bounds
+        let rx0 = (px_min.floor() as i64 - 1).clamp(0, src_w as i64 - 1) as usize;
+        let ry0 = (py_min.floor() as i64 - 1).clamp(0, src_h as i64 - 1) as usize;
+        let rx1 = (px_max.ceil() as i64 + 2).clamp(rx0 as i64 + 1, src_w as i64) as usize;
+        let ry1 = (py_max.ceil() as i64 + 2).clamp(ry0 as i64 + 1, src_h as i64) as usize;
+
+        let rw = rx1 - rx0;
+        let rh = ry1 - ry0;
+
+        // Cap buffer to 2048 — GDAL bilinear-resamples if buf_size < window_size
+        const MAX_BUF: usize = 2048;
+        let bw = rw.min(MAX_BUF);
+        let bh = rh.min(MAX_BUF);
+
+        let buf = band
+            .read_as::<f32>(
+                (rx0 as isize, ry0 as isize),
+                (rw, rh),
+                (bw, bh),
+                Some(ResampleAlg::Bilinear),
+            )
+            .context("read_as")?;
+        let src_data = buf.data();
+
+        let sx = bw as f64 / rw as f64; // source → buffer scale
+        let sy = bh as f64 / rh as f64;
+
+        // ── Build 512×512 output pixel centre coordinates in source SRS ───────
+        let n = 512 * 512;
+        let pw = (east_m - west_m) / 512.0;
+        let ph = (north_m - south_m) / 512.0;
+
+        let mut px3 = Vec::with_capacity(n);
+        let mut py3 = Vec::with_capacity(n);
+
+        if src_is_wgs84 {
+            // Fast path: convert Mercator → WGS84 directly, no GDAL transform
+            for row in 0..512usize {
+                for col in 0..512usize {
+                    let x_m = west_m + (col as f64 + 0.5) * pw;
+                    let y_m = north_m - (row as f64 + 0.5) * ph;
+                    let (lon, lat) = merc_to_wgs84(x_m, y_m);
+                    px3.push(lon);
+                    py3.push(lat);
+                }
+            }
+        } else {
+            for row in 0..512usize {
+                for col in 0..512usize {
+                    px3.push(west_m + (col as f64 + 0.5) * pw);
+                    py3.push(north_m - (row as f64 + 0.5) * ph);
+                }
+            }
+            cache
+                .to_src
+                .as_ref()
+                .unwrap()
+                .transform_coords(&mut px3, &mut py3, &mut [])
+                .context("transform pixel grid")?;
+        }
+
+        // ── Sample + encode ───────────────────────────────────────────────────
+        let mut rgb = vec![0u8; n * 3];
+        let mut any_valid = false;
+
+        for i in 0..n {
+            let bpx = ((px3[i] - gt[0]) / gt[1] - rx0 as f64) * sx;
+            let bpy = ((py3[i] - gt[3]) / gt[5] - ry0 as f64) * sy;
+
+            let elev = sample_bilinear(src_data, bw, bh, bpx, bpy, nodata);
+            let c = match encoding {
+                Encoding::Mapbox => encode_mapbox(elev, base_val, interval, round, nodata),
+                Encoding::Terrarium => encode_terrarium(elev, nodata),
+            };
+            if c != [0, 0, 0] {
+                any_valid = true;
+            }
+            rgb[i * 3..i * 3 + 3].copy_from_slice(&c);
+        }
+
+        if !any_valid {
+            return Ok(None);
+        }
+
+        let tile = match format {
+            TileFormat::Webp => crate::tile_format::webp::encode_tile(&rgb, compress)?,
+            TileFormat::Png => crate::tile_format::png::encode_tile(&rgb, compress)?,
         };
-        if c != [0, 0, 0] {
-            any_valid = true;
-        }
-        rgb[i * 3..i * 3 + 3].copy_from_slice(&c);
-    }
-
-    if !any_valid {
-        return Ok(None);
-    }
-
-    let tile = match format {
-        TileFormat::Webp => crate::tile_format::webp::encode_tile(&rgb, compress)?,
-        TileFormat::Png => crate::tile_format::png::encode_tile(&rgb, compress)?,
-    };
-    Ok(Some(tile))
+        Ok(Some(tile))
+    })
 }
