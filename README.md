@@ -90,23 +90,51 @@ massif --compress 6 -r 5 input.tif output.pmtiles
 | `-i, --interval` | `0.1` | Elevation precision in metres |
 | `-r, --round-digits` | `3` | Zero out lowest N bits of encoded value (reduces entropy) |
 
+## Input preparation
+
+**GDAL overviews** precompute downsampled versions of your raster so massif can read low-zoom tiles cheaply instead of resampling the full-resolution data each time. This reduces processing time by 20–40%.
+
+```bash
+# Single TIF — writes a sidecar .ovr file, does not modify the input
+gdaladdo -ro -r average input.tif 2 4 8 16 32 64 128 256
+
+# VRT — same approach, creates merged.vrt.ovr
+gdaladdo -ro -r average merged.vrt 2 4 8 16 32 64 128 256
+```
+
+Massif (via GDAL) picks up the `.ovr` sidecar automatically. The tradeoff is storage: the `.ovr` file can be as large as the source data itself. If disk space is constrained, skip overviews and run without — massif handles it, just slower.
+
 ## Performance
 
-Tested on a 7.7 GB Float32 GeoTIFF (Indonesia, zoom 5–12, ~68K tiles, Apple M4 Pro, 14 threads):
+### Single large TIF — 7.2 GB (Indonesia, zoom 5–12, ~142K tiles)
 
-| Command | Time | Output |
-|---|---|---|
-| `massif` *(no compress)* | **2:25** | 4,560 MB |
-| `massif --compress 6` | **6:29** | 2,844 MB |
-| `massif --compress 6 -r 5` | **5:52** | 1,849 MB |
+| Machine | Overviews | Command | Time | Output |
+|---|---|---|---|---|
+| Apple M4 Pro, 14 threads | no | `massif` | 2:30 | 4,560 MB |
+| Apple M4 Pro, 14 threads | yes | `massif` | 1:28 | 4,560 MB |
+| Apple M4 Pro, 14 threads | no | `massif --compress 6` | 6:29 | 2,844 MB |
+| Apple M4 Pro, 14 threads | yes | `massif --compress 6` | 5:35 | 2,844 MB |
+| Xeon Silver 4210, 20 threads | no | `massif` | 7:20 | 4,560 MB |
+| Xeon Silver 4210, 20 threads | yes | `massif` | 5:42 | 4,560 MB |
+| Xeon Silver 4210, 20 threads | no | `massif --compress 6` | 16:21 | 2,844 MB |
+| Xeon Silver 4210, 20 threads | yes | `massif --compress 6` | 12:44 | 2,844 MB |
+| Xeon Silver 4210, 20 threads | no | `rio-rgbify` | 25:51 | ~2,810 MB |
 
-All tiles are 512×512 lossless WebP images. Recommended production setting: `--compress 6`.
+### VRT of 70 TIFs — 66 GB total (Europe + Oceania, zoom 5–12)
+
+| Machine | Command | Time | Output |
+|---|---|---|---|
+| Xeon Silver 4210, 20 threads | `massif` | **15h 47m** | 48,062 MB |
+| Xeon Silver 4210, 20 threads | `rio-rgbify` | DNF after 48h | — |
+
+rio-rgbify did not finish after 48 hours on the same machine and dataset. All massif tiles are 512×512 lossless WebP images. The Xeon results were measured on a server under normal production load — actual times on an idle machine would be lower.
 
 | Setting | Impact | Notes |
 |---|---|---|
+| GDAL overviews | **−20–40%** time | Effective for single TIFs; `.ovr` can match source file size |
 | WebP vs PNG | WebP is **2× smaller** | Use PNG only if client doesn't support WebP |
-| `--compress 6` | **−38%** vs no compression | Best size/speed tradeoff; gains flatten past 5 |
-| `-r 3` (default) | **−43%** vs r=0 | Biggest lever for file size; invisible for hillshading at most latitudes |
+| `--compress 6` | **−38%** size vs no compression | Best size/speed tradeoff; gains flatten past 5 |
+| `-r 3` (default) | **−43%** size vs r=0 | Biggest lever for file size; invisible for hillshading at most latitudes |
 | Terrarium vs Mapbox | Terrarium is **3.1× larger** | No round-digits equivalent; use Mapbox when possible |
 
 For full benchmark methodology, all 36 parameter combinations, and recommended settings by use case, see [docs/benchmarks.md](docs/benchmarks.md).
