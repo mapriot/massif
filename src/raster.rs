@@ -7,7 +7,7 @@ use gdal::Dataset;
 
 use crate::encoder::{encode_mapbox, encode_terrarium, Encoding};
 use crate::tile_format::TileFormat;
-use crate::tile::{merc_to_wgs84, tile_bounds_3857};
+use crate::tile::{merc_to_wgs84, tile_bounds_3857, HALF_CIRC};
 
 /// Bilinear sample from a flat f32 buffer. Returns `nodata` if out of bounds.
 pub fn sample_bilinear(
@@ -241,26 +241,78 @@ pub fn process_tile(
         let sx = bw as f64 / rw as f64; // source → buffer scale
         let sy = bh as f64 / rh as f64;
 
-        // ── Build 512×512 output pixel centre coordinates in source SRS ───────
-        let n = 512 * 512;
+        // ── Early exit: if source buffer is entirely nodata, skip tile ─────
+        let is_nd = |v: f32| (v - nodata).abs() < 0.5 || v.is_nan();
+        if !src_data.iter().any(|&v| !is_nd(v)) {
+            return Ok(None);
+        }
+
+        // ── Build pixel coordinates and sample + encode ──────────────────────
+        const N: usize = 512 * 512;
         let pw = (east_m - west_m) / 512.0;
         let ph = (north_m - south_m) / 512.0;
 
-        let mut px3 = Vec::with_capacity(n);
-        let mut py3 = Vec::with_capacity(n);
+        let mut rgb = vec![0u8; N * 3];
+        let mut any_valid = false;
 
         if src_is_wgs84 {
-            // Fast path: convert Mercator → WGS84 directly, no GDAL transform
+            // ── WGS84 fast path: separable lon/lat grid ──────────────────────
+            // The pixel grid is regular in Mercator space, and Mercator→WGS84
+            // is separable: lon depends only on x, lat only on y. So we need
+            // just 512+512 = 1024 coordinate conversions instead of 512×512.
+            //
+            // We also precompute the full geo→buffer-pixel mapping per row/col,
+            // eliminating 262K divisions from the inner loop.
+
+            let scale_x = sx / gt[1]; // combined geo→buffer scale
+            let off_x = (gt[0] / gt[1] + rx0 as f64) * sx;
+            let scale_y = sy / gt[5];
+            let off_y = (gt[3] / gt[5] + ry0 as f64) * sy;
+
+            let deg_per_merc = 180.0 / HALF_CIRC;
+            let pi_over_hc = std::f64::consts::PI / HALF_CIRC;
+
+            // Precompute per-column: Mercator x → lon → buffer pixel x
+            let mut bpx_col = [0.0f64; 512];
+            for col in 0..512usize {
+                let x_m = west_m + (col as f64 + 0.5) * pw;
+                let lon = x_m * deg_per_merc;
+                bpx_col[col] = lon * scale_x - off_x;
+            }
+
+            // Precompute per-row: Mercator y → lat → buffer pixel y
+            let mut bpy_row = [0.0f64; 512];
             for row in 0..512usize {
+                let y_m = north_m - (row as f64 + 0.5) * ph;
+                let lat = (2.0 * (y_m * pi_over_hc).exp().atan()
+                    - std::f64::consts::FRAC_PI_2)
+                    .to_degrees();
+                bpy_row[row] = lat * scale_y - off_y;
+            }
+
+            // Fused sample + encode — no Vec allocations, no per-pixel trig
+            for row in 0..512usize {
+                let bpy = bpy_row[row];
+                let base = row * 512 * 3;
                 for col in 0..512usize {
-                    let x_m = west_m + (col as f64 + 0.5) * pw;
-                    let y_m = north_m - (row as f64 + 0.5) * ph;
-                    let (lon, lat) = merc_to_wgs84(x_m, y_m);
-                    px3.push(lon);
-                    py3.push(lat);
+                    let elev = sample_bilinear(src_data, bw, bh, bpx_col[col], bpy, nodata);
+                    let c = match encoding {
+                        Encoding::Mapbox => encode_mapbox(elev, base_val, interval, round, nodata),
+                        Encoding::Terrarium => encode_terrarium(elev, nodata),
+                    };
+                    if c != [0, 0, 0] {
+                        any_valid = true;
+                    }
+                    let idx = base + col * 3;
+                    rgb[idx] = c[0];
+                    rgb[idx + 1] = c[1];
+                    rgb[idx + 2] = c[2];
                 }
             }
         } else {
+            // ── General path: full 262K coordinate transform ─────────────────
+            let mut px3 = Vec::with_capacity(N);
+            let mut py3 = Vec::with_capacity(N);
             for row in 0..512usize {
                 for col in 0..512usize {
                     px3.push(west_m + (col as f64 + 0.5) * pw);
@@ -273,25 +325,21 @@ pub fn process_tile(
                 .unwrap()
                 .transform_coords(&mut px3, &mut py3, &mut [])
                 .context("transform pixel grid")?;
-        }
 
-        // ── Sample + encode ───────────────────────────────────────────────────
-        let mut rgb = vec![0u8; n * 3];
-        let mut any_valid = false;
+            for i in 0..N {
+                let bpx = ((px3[i] - gt[0]) / gt[1] - rx0 as f64) * sx;
+                let bpy = ((py3[i] - gt[3]) / gt[5] - ry0 as f64) * sy;
 
-        for i in 0..n {
-            let bpx = ((px3[i] - gt[0]) / gt[1] - rx0 as f64) * sx;
-            let bpy = ((py3[i] - gt[3]) / gt[5] - ry0 as f64) * sy;
-
-            let elev = sample_bilinear(src_data, bw, bh, bpx, bpy, nodata);
-            let c = match encoding {
-                Encoding::Mapbox => encode_mapbox(elev, base_val, interval, round, nodata),
-                Encoding::Terrarium => encode_terrarium(elev, nodata),
-            };
-            if c != [0, 0, 0] {
-                any_valid = true;
+                let elev = sample_bilinear(src_data, bw, bh, bpx, bpy, nodata);
+                let c = match encoding {
+                    Encoding::Mapbox => encode_mapbox(elev, base_val, interval, round, nodata),
+                    Encoding::Terrarium => encode_terrarium(elev, nodata),
+                };
+                if c != [0, 0, 0] {
+                    any_valid = true;
+                }
+                rgb[i * 3..i * 3 + 3].copy_from_slice(&c);
             }
-            rgb[i * 3..i * 3 + 3].copy_from_slice(&c);
         }
 
         if !any_valid {
