@@ -126,10 +126,12 @@ Massif (via GDAL) picks up the `.ovr` sidecar automatically. The tradeoff is sto
 
 ### VRT of 70 TIFs — 66 GB total (Europe + Oceania, zoom 5–12)
 
-| Machine | Command | Time | Output |
-|---|---|---|---|
-| Xeon Silver 4210, 20 threads | `massif` | **15h 47m** | 48,062 MB |
-| Xeon Silver 4210, 20 threads | `rio-rgbify` | DNF after 48h | — |
+| Machine | Command | Version |Time | Output |
+|---|---|---|---|---|
+| Xeon Silver 4210, 20 threads | `massif` | v0.1.1 |**1h 36m** | 48,062 MB |
+| Xeon Silver 4210, 20 threads | `massif --compress 6` | v0.1.1 |**4h 00m** | 29,877 MB |
+| Xeon Silver 4210, 20 threads | `massif` | v0.1.0 |**15h 47m** | 48,062 MB |
+| Xeon Silver 4210, 20 threads | `rio-rgbify` | - | DNF after 48h | — |
 
 rio-rgbify did not finish after 48 hours on the same machine and dataset. All massif tiles are 512×512 lossless WebP images. The Xeon results were measured on a server under normal production load — actual times on an idle machine would be lower.
 
