@@ -19,6 +19,12 @@ GDAL must be installed on your system.
 | Fedora / RHEL | `sudo dnf install gdal-devel` |
 | Windows | [OSGeo4W](https://trac.osgeo.org/osgeo4w/) or [Conda](https://anaconda.org/conda-forge/gdal) — ensure `gdal-config` is on your PATH *(untested)* |
 
+> **Supported GDAL versions: 3.5–3.12.** These are the versions the `gdal` Rust crate ships bindings for; GDAL **3.13 and newer are not yet supported** and will fail to build. If your package manager installs 3.13+ (current Homebrew `gdal` does), install a supported build instead — e.g. via conda-forge:
+> ```bash
+> conda install -c conda-forge 'gdal>=3.5,<3.13'
+> ```
+> then build with that environment's `pkg-config` on your `PATH`.
+
 ### Install massif
 
 **From crates.io**
