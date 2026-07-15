@@ -70,6 +70,25 @@ massif --format png --compress 6 input.tif output.pmtiles
 massif --compress 6 -r 5 input.tif output.pmtiles
 ```
 
+### Faster PMTiles for large, ocean-heavy builds
+
+For large extents with lots of empty area (coastlines, open ocean, gaps in
+coverage), **MBTiles output is significantly faster**: it uses a sparse frontier
+that prunes whole nodata subtrees instead of reading every candidate tile. To
+end up with a PMTiles, generate MBTiles and convert it with the
+[`pmtiles`](https://github.com/protomaps/go-pmtiles) CLI:
+
+```bash
+massif --compress 6 input.tif output.mbtiles
+pmtiles convert output.mbtiles output.pmtiles
+```
+
+The convert step is a fast bulk repack (seconds) that produces the same
+Hilbert-clustered PMTiles. On an Indonesia z5–10 build this two-step path is
+~2× faster end-to-end than generating PMTiles directly (≈42 s vs ≈90 s), at
+lower peak memory. For small or land-dense extents, generating `.pmtiles`
+directly is simplest and just as fast.
+
 ### All options
 
 | Flag | Default | Description |
