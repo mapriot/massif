@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - 2026-07-15
 
 ### Added
 
@@ -51,5 +51,6 @@ Initial release.
 - Nodata override (`--nodata`) for rasters with missing or incorrect metadata
 - Any input CRS — automatic reprojection to Web Mercator via GDAL
 
+[0.2.0]: https://github.com/mapriot/massif/releases/tag/v0.2.0
 [0.1.1]: https://github.com/mapriot/massif/releases/tag/v0.1.1
 [0.1.0]: https://github.com/mapriot/massif/releases/tag/v0.1.0
