@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Performance
+
+- MBTiles generation now uses a sparse frontier for large builds: it descends the tile pyramid with work-stealing parallelism and prunes whole nodata subtrees (open ocean, gaps in coverage) instead of reading every candidate tile. ~2.2× faster on ocean-heavy inputs — e.g. an Indonesia z5–10 build drops from ~90s to ~40s — at flat peak memory. Small extents keep the flat path (the frontier's shallow top-down dependency isn't worth it when there's nothing to prune), and the output tile set is byte-for-byte identical either way. Only prune-safe fully-nodata tiles are pruned, so small islands and thin coastlines are never dropped. PMTiles is unchanged.
+
 ### Fixed
 
 - Set `center_zoom` in the PMTiles header to the middle of the zoom range. It was previously left at the default of 0, which falls outside the generated `[min_z, max_z]` range.

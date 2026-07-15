@@ -143,10 +143,28 @@ fn init_dataset_cache(input_path: &str) -> Result<DatasetCache> {
     })
 }
 
-/// Process one tile; returns `None` if entirely nodata.
-/// Uses a per-thread dataset cache — GDAL datasets are not Send but are safe
-/// to reuse on the same thread across tiles.
-pub fn process_tile(
+/// Outcome of evaluating a single tile.
+///
+/// The distinction between `Blank` and `NoData` matters for the sparse-frontier
+/// pruning in `frontier.rs`: only `NoData` is safe to prune, because a tile's
+/// read window always contains every descendant's read window. `Blank` (source
+/// had data but this tile encoded empty) is *not* safe to prune — a finer child
+/// can still resolve a thin data sliver or a small island the parent's coarser
+/// grid stepped over.
+pub enum TileEval {
+    /// Non-empty tile — write it, and expand its children.
+    Rendered(Vec<u8>),
+    /// Source window had data but this tile encoded to all-empty pixels.
+    /// Don't write, but still expand children.
+    Blank,
+    /// Source window is entirely nodata → the whole subtree is nodata too.
+    /// Don't write, and prune every descendant.
+    NoData,
+}
+
+/// Evaluate one tile. Uses a per-thread dataset cache — GDAL datasets are not
+/// Send but are safe to reuse on the same thread across tiles.
+pub fn eval_tile(
     input_path: &str,
     z: u8,
     x: u32,
@@ -158,10 +176,10 @@ pub fn process_tile(
     format: TileFormat,
     compress: Option<u8>,
     nodata_override: Option<f32>,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<TileEval> {
     use gdal::raster::ResampleAlg;
 
-    TILE_CACHE.with(|cell| -> Result<Option<Vec<u8>>> {
+    TILE_CACHE.with(|cell| -> Result<TileEval> {
         // Ensure this thread's cache is warm for the current input path.
         // The inner scope drops the mutable borrow before we take an immutable one below.
         {
@@ -242,9 +260,12 @@ pub fn process_tile(
         let sy = bh as f64 / rh as f64;
 
         // ── Early exit: if source buffer is entirely nodata, skip tile ─────
+        // This is the only prune-safe empty result: the read window here fully
+        // contains every descendant tile's read window, so all of them are
+        // nodata too.
         let is_nd = |v: f32| (v - nodata).abs() < 0.5 || v.is_nan();
         if !src_data.iter().any(|&v| !is_nd(v)) {
-            return Ok(None);
+            return Ok(TileEval::NoData);
         }
 
         // ── Build pixel coordinates and sample + encode ──────────────────────
@@ -342,14 +363,41 @@ pub fn process_tile(
             }
         }
 
+        // Source had data but nothing in this tile encoded to a non-empty
+        // pixel. Not prune-safe (a finer child may still resolve data), so it
+        // is distinct from `NoData`.
         if !any_valid {
-            return Ok(None);
+            return Ok(TileEval::Blank);
         }
 
         let tile = match format {
             TileFormat::Webp => crate::tile_format::webp::encode_tile(&rgb, compress)?,
             TileFormat::Png => crate::tile_format::png::encode_tile(&rgb, compress)?,
         };
-        Ok(Some(tile))
+        Ok(TileEval::Rendered(tile))
+    })
+}
+
+/// Process one tile for the flat generation path; returns `None` when the tile
+/// is empty (whether prune-safe or not — the flat path does not prune).
+pub fn process_tile(
+    input_path: &str,
+    z: u8,
+    x: u32,
+    y_xyz: u32,
+    base_val: f64,
+    interval: f64,
+    round: u32,
+    encoding: Encoding,
+    format: TileFormat,
+    compress: Option<u8>,
+    nodata_override: Option<f32>,
+) -> Result<Option<Vec<u8>>> {
+    Ok(match eval_tile(
+        input_path, z, x, y_xyz, base_val, interval, round, encoding, format, compress,
+        nodata_override,
+    )? {
+        TileEval::Rendered(tile) => Some(tile),
+        TileEval::Blank | TileEval::NoData => None,
     })
 }
