@@ -1,12 +1,21 @@
 name: Publish Docker image
 
-# Builds and pushes ghcr.io/<owner>/massif on every version tag (v*).
-# Also runnable manually from the Actions tab (pick a tag as the ref) — handy
-# for the first publish. amd64 only, to keep builds fast.
+# Builds and pushes a multi-arch (amd64 + arm64) image to
+# ghcr.io/<owner>/massif on every version tag (v*). Docker picks the right
+# architecture automatically on pull.
+#
+# Can also be run manually from the Actions tab. Set the "version" input to also
+# tag the image with a specific version (e.g. 0.2.0); leave it blank to publish
+# only :latest.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to also tag the image with (e.g. 0.2.0); blank = :latest only'
+        required: false
+        default: ''
 
 jobs:
   docker:
@@ -16,6 +25,9 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
+      # QEMU lets the amd64 runner build the arm64 image (slower, but no extra runner).
+      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -33,13 +45,14 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
             type=raw,value=latest
 
-      - name: Build and push (linux/amd64)
+      - name: Build and push (amd64 + arm64)
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
