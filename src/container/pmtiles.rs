@@ -21,6 +21,9 @@ impl PmtilesWriter {
         let inner = PmTilesWriter::new(tile_type)
             .min_zoom(min_z)
             .max_zoom(max_z)
+            // Without this the header's center_zoom defaults to 0, which sits
+            // outside our [min_z, max_z] range; point it at the middle zoom.
+            .center_zoom(min_z + (max_z - min_z) / 2)
             .create(f)
             .context("create PMTiles writer")?;
         Ok(Self { inner })

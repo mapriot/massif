@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Set `center_zoom` in the PMTiles header to the middle of the zoom range. It was previously left at the default of 0, which falls outside the generated `[min_z, max_z]` range.
+
 ## [0.1.1] - 2026-03-30
 
 ### Performance
