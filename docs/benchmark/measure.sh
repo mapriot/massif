@@ -57,18 +57,25 @@ median() {
   }'
 }
 
+# ── on failure, print massif's own output (filtering /usr/bin/time noise) ────
+dump_failure() {
+  echo "  run failed (rc=$1) — massif output:" >&2
+  grep -vaE "resident set size|context switch|page (reclaims|faults|size)|instructions retired|cycles elapsed|memory footprint|[0-9] (real|user|sys)$|reclaims|messages|signals|swaps|block (in|out)|maximum|involuntary|voluntary|(shared|unshared) (text|data)|Command being timed|(User|System) time|Percent of CPU|Elapsed \(wall|Average|Major |Minor |File system|Socket|Exit status|stack size" \
+    "$STDERR_FILE" >&2
+}
+
 # ── one run: sets REAL_SEC, RSS_MB, and leaves stderr in $STDERR_FILE ────────
 run_once() {
   STDERR_FILE="$(mktemp)"
   if [ "$OS" = "Darwin" ]; then
-    { /usr/bin/time -l "$MASSIF" "${EXTRA_ARGS[@]}" "$INPUT" "$OUTPUT" >/dev/null; } 2>"$STDERR_FILE" || {
-      echo "  run failed — massif stderr tail:" >&2; tail -5 "$STDERR_FILE" >&2; exit 1; }
+    { /usr/bin/time -l "$MASSIF" "${EXTRA_ARGS[@]}" "$INPUT" "$OUTPUT" >/dev/null; } 2>"$STDERR_FILE" \
+      || { dump_failure "$?"; exit 1; }
     REAL_SEC="$(awk '{for(i=1;i<=NF;i++) if($i=="real") print $(i-1)}' "$STDERR_FILE" | tail -1)"
     local rss_bytes; rss_bytes="$(awk '/maximum resident set size/{print $1}' "$STDERR_FILE" | tail -1)"
     RSS_MB="$(awk -v b="${rss_bytes:-0}" 'BEGIN{printf "%.1f", b/1048576}')"
   else
-    { /usr/bin/time -v "$MASSIF" "${EXTRA_ARGS[@]}" "$INPUT" "$OUTPUT" >/dev/null; } 2>"$STDERR_FILE" || {
-      echo "  run failed — massif stderr tail:" >&2; tail -5 "$STDERR_FILE" >&2; exit 1; }
+    { /usr/bin/time -v "$MASSIF" "${EXTRA_ARGS[@]}" "$INPUT" "$OUTPUT" >/dev/null; } 2>"$STDERR_FILE" \
+      || { dump_failure "$?"; exit 1; }
     local elapsed; elapsed="$(awk -F': ' '/Elapsed \(wall clock\)/{print $2}' "$STDERR_FILE" | tail -1)"
     REAL_SEC="$(to_seconds "$elapsed")"
     local rss_kb; rss_kb="$(awk -F': ' '/Maximum resident set size/{print $2}' "$STDERR_FILE" | tail -1)"
