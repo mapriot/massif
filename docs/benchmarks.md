@@ -4,7 +4,7 @@ Exhaustive parameter sweep across all combinations of format, compression, encod
 
 ## Methodology
 
-Each run produces a full tile set from zoom 5–10 (small) or 5–12 (large). We measure wall-clock time, output file size, tile count, and per-tile sizes. The benchmark script is at [`benchmark/bench.sh`](benchmark/bench.sh).
+Each run produces a full tile set from zoom 5–10 (small) or 5–12 (large). We measure wall-clock time, output file size, tile count, and per-tile sizes. The exhaustive parameter sweep uses [`benchmark/bench.sh`](benchmark/bench.sh); for A/B comparison of a single configuration (median wall time + peak RSS across repeated runs) there's [`benchmark/measure.sh`](benchmark/measure.sh).
 
 **Parameter matrix:**
 - **Format:** WebP, PNG
@@ -17,7 +17,55 @@ Each run produces a full tile set from zoom 5–10 (small) or 5–12 (large). We
 
 ---
 
-## Small dataset
+## Real-world timings
+
+Full production jobs on real elevation data. All massif tiles are 512×512 lossless WebP; `--compress 6` sizes are for PMTiles.
+
+### Sparse frontier (0.2.0)
+
+On large, empty-heavy extents massif's MBTiles path prunes whole nodata subtrees instead of reading every candidate tile. Output is byte-for-byte identical to the flat path; only generation speed changes.
+
+| Input | Machine | flat | sparse frontier |
+|---|---|---|---|
+| Czech + Turkey + Indonesia VRT, z5–10 | Xeon Silver 4210, 20 threads | 5m49s | **3m33s** |
+| Indonesia single file, z5–10 | Apple M4 Pro, 14 threads | ~90s | **~40s** |
+
+The win scales with how much of the bounding box is empty; tight land-dense extents fall back to the flat path automatically and are unchanged.
+
+### Single large TIF — Indonesia, 7.2 GB Float32, zoom 5–12
+
+| Machine | Version | Overviews | Command | Time | Output |
+|---|---|---|---|---|---|
+| Apple M4 Pro, 14 threads | v0.1.1 | yes | `massif` | 0:51 | 4,560 MB |
+| Apple M4 Pro, 14 threads | v0.1.1 | yes | `massif --compress 6` | 4:52 | 2,844 MB |
+| Apple M4 Pro, 14 threads | v0.1.1 | no | `massif` | 2:02 | 4,560 MB |
+| Apple M4 Pro, 14 threads | v0.1.1 | no | `massif --compress 6` | 6:18 | 2,844 MB |
+| Xeon Silver 4210, 20 threads | v0.1.0 | yes | `massif` | 5:42 | 4,560 MB |
+| Xeon Silver 4210, 20 threads | v0.1.0 | no | `massif` | 7:20 | 4,560 MB |
+| Xeon Silver 4210, 20 threads | v0.1.0 | yes | `massif --compress 6` | 12:44 | 2,844 MB |
+| Xeon Silver 4210, 20 threads | v0.1.0 | no | `massif --compress 6` | 16:21 | 2,844 MB |
+| Xeon Silver 4210, 20 threads | — | — | `rio-rgbify` | 25:51 | ~2,810 MB |
+
+### VRT of 70 TIFs — 66 GB, Europe + Oceania, zoom 5–12
+
+Xeon Silver 4210, 20 threads, measured under production load — an idle machine would be faster.
+
+| Command | Version | Time | Output |
+|---|---|---|---|
+| `massif --compress 6` | v0.1.1 | **4h 00m** | 29,877 MB |
+| `massif` | v0.1.1 | **1h 36m** | 48,062 MB |
+| `massif` | v0.1.0 | 15h 47m | 48,062 MB |
+| `rio-rgbify` | — | DNF after 48h | — |
+
+rio-rgbify did not finish after 48 hours on the same machine and dataset.
+
+---
+
+## Parameter sweep
+
+> Measured on v0.1.x. massif 0.2.0 changed only generation *speed* (the sparse frontier), not tile content — output is byte-identical — so the size, format, compression, and encoding figures below remain accurate for current versions.
+
+### Small dataset
 
 **Input:** sample.tif (small test raster)
 **Zoom:** 5–10, 536 tiles
@@ -38,7 +86,7 @@ Each run produces a full tile set from zoom 5–10 (small) or 5–12 (large). We
 | PNG | 6 | 62.0 MB | 61.6 MB | 121 KB | 2s |
 | PNG | 9 | 57.8 MB | 57.4 MB | 113 KB | 5s |
 
-> Note: PNG compress 1–3 produced identical output to no compression in this run (pre-fix). After the fix in v0.1.0, compress 1–3 now maps to `Default` compression and will produce smaller files.
+> Note: the PNG compress 1–3 rows above predate the v0.1.0 compression-mapping fix and no longer reflect current behavior — compress 1–3 now maps to `Default` compression and produces smaller files (as seen in the large-dataset table below). Re-measure if you need exact current small-dataset PNG numbers.
 
 ### Encoding comparison
 
@@ -65,9 +113,9 @@ Each run produces a full tile set from zoom 5–10 (small) or 5–12 (large). We
 
 ---
 
-## Large dataset
+### Large dataset
 
-**Input:** 7.7 GB Float32 GeoTIFF (Indonesia)
+**Input:** 7.2 GB Float32 GeoTIFF (Indonesia)
 **Zoom:** 5–12, 67,807 tiles
 **Hardware:** Apple M4 Pro, 48 GB RAM, 14 threads
 
