@@ -1,0 +1,13 @@
+# Keep the build context tiny — never ship data or build artifacts to the daemon.
+target/
+.git/
+
+# Elevation inputs and tile outputs (can be many GB)
+*.tif
+*.vrt
+*.ovr
+*.pmtiles
+*.mbtiles
+
+# Benchmark outputs
+docs/benchmark/out/

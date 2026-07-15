@@ -45,6 +45,22 @@ On macOS with Homebrew GDAL you may need:
 PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig" cargo build --release
 ```
 
+### Docker
+
+Run massif without installing GDAL or Rust — only Docker is required. Build the image once:
+
+```bash
+docker build -t massif .
+```
+
+Then run it, bind-mounting the directory that holds your rasters (and where output should go) at `/data`:
+
+```bash
+docker run --rm -v "$PWD:/data" massif --compress 6 /data/input.tif /data/output.pmtiles
+```
+
+Paths are resolved inside the container, so keep inputs and outputs under the mounted directory. For a VRT, mount the directory containing both the `.vrt` and every `.tif` it references.
+
 ## Usage
 
 ```
