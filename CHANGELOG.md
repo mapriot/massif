@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-07-16
+
+### Fixed
+
+- Write the MBTiles metadata `format` as `webp`/`png` instead of the MIME type `image/webp`/`image/png`. `pmtiles convert` doesn't recognize the MIME form, so the recommended MBTiles → PMTiles workflow produced an archive with Unknown tile type and compression that tile servers (martin, tileserver-gl) reject. Converted archives are now directly servable.
+
 ## [0.2.0] - 2026-07-15
 
 ### Added
@@ -51,6 +57,7 @@ Initial release.
 - Nodata override (`--nodata`) for rasters with missing or incorrect metadata
 - Any input CRS — automatic reprojection to Web Mercator via GDAL
 
+[0.2.1]: https://github.com/mapriot/massif/releases/tag/v0.2.1
 [0.2.0]: https://github.com/mapriot/massif/releases/tag/v0.2.0
 [0.1.1]: https://github.com/mapriot/massif/releases/tag/v0.1.1
 [0.1.0]: https://github.com/mapriot/massif/releases/tag/v0.1.0

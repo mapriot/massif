@@ -38,9 +38,13 @@ impl MbtilesWriter {
             );
         ").context("create MBTiles schema")?;
 
-        let mime = match format {
-            TileFormat::Webp => "image/webp",
-            TileFormat::Png  => "image/png",
+        // MBTiles `format` is the short tile-format name (webp/png), not a MIME
+        // type — `pmtiles convert` and most readers only recognize the short
+        // form. Writing "image/webp" here left the converted PMTiles with an
+        // Unknown tile type/compression that tile servers reject.
+        let tile_format = match format {
+            TileFormat::Webp => "webp",
+            TileFormat::Png  => "png",
         };
 
         {
@@ -49,7 +53,7 @@ impl MbtilesWriter {
             ).context("prepare metadata insert")?;
             for (k, v) in [
                 ("name",    "massif"),
-                ("format",  mime),
+                ("format",  tile_format),
                 ("type",    "baselayer"),
                 ("version", "1.1"),
                 ("minzoom", &min_z.to_string()),
